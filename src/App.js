@@ -10,7 +10,9 @@ import '@aws-amplify/ui-react/styles.css';
 import awsExports from './aws-exports';
 import MainHeader from './components/Headers/MainHeader';
 import Lists from './components/Lists/Lists';
-import { Button, Container, Icon } from 'semantic-ui-react';
+import { Button, Container, Form, Icon, Modal } from 'semantic-ui-react';
+
+
 
 
 
@@ -19,6 +21,7 @@ Amplify.configure(awsExports);
 
 export default function App() {
   const [lists, setLists] = useState([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Fetch list from the API using Amplify.API
   async function fetchList() {
@@ -36,30 +39,56 @@ export default function App() {
     fetchList();
   }, []);
 
+  function toggleModal(shouldOpen) {
+    setIsModalOpen(shouldOpen);
+  }
+
   return (
     <>
-      <Button className='floatingButton'>
-        <Icon name = 'plus' className='floatingButton_icon'/>
-      </Button>
       <MainHeader />
 
       <Authenticator>
-
         {({ signOut, user }) => (
+          <>
+            <Container style={{ height: '100vh' }}>
+              {/* Floating Button */}
+              <Button className='floatingButton' onClick={() => toggleModal(true)}>
+                <Icon name='plus' className='floatingButton_icon' />
+              </Button>
 
-          <Container>
+              <main>
+                {/* User Greeting and Sign out Button */}
+                <h1>Hello {user.username}</h1>
+                <button className="fluid ui button" onClick={signOut}>Sign out</button>
 
-            <main>
-              <h1>Hello {user.username}</h1>
-              <button className="fluid ui button" onClick={signOut}>Sign out</button>
+                {/* Render fetched lists */}
+                <Lists lists={lists} />
+              </main>
 
-              {/* Render fetched lists */}
-              <Lists lists={lists} />
-            </main>
-          </Container>
+              {/* Modal Component */}
+              <Modal open={isModalOpen} dimmer='blurring'>
+                <Modal.Header> Create your list </Modal.Header>
+                <Modal.Content><Form>
+                  <Form.Input
+                    error={true ? false : { content: 'Please add a name to your list' }}
+                    label='Title'
+                    placeholder='My pretty list'
+                  />
+                  <Form.TextArea
+                    label='Description'
+                    placeholder='Things that my pretty list is about'
+                  />
+                </Form>
+                </Modal.Content>
+                <Modal.Actions>
+                  <Button negative onClick={() => toggleModal(false)}>Cancel</Button>
+                  <Button positive onClick={() => toggleModal(false)}>Save</Button>
+                </Modal.Actions>
+              </Modal>
+            </Container>
+          </>
         )}
       </Authenticator>
-
     </>
   );
 }
