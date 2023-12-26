@@ -1,0 +1,23 @@
+type List @model @auth(rules: [{ allow: owner }]) {
+  id: ID!
+  title: String!
+  description: String
+  listItems: [ListItem] @hasMany(indexName: "byList", fields: ["id"])
+}
+
+type ListItem @model @auth(rules: [{ allow: owner }]) {
+  id: ID!
+  title: String!
+  quantity: Int
+  done: Boolean
+  listID: ID! @index(name: "byList")
+  list: List @belongsTo(fields: ["listID"])
+  actions: [Action] @hasMany(indexName: "byListItem", fields: ["id"])
+}
+
+type Action @model @auth(rules: [{ allow: owner }]) {
+  id: ID!
+  action: String!
+  listItemID: ID! @index(name: "byListItem")
+  listItem: ListItem @belongsTo(fields: ["listItemID"])
+}
