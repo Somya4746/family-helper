@@ -1,7 +1,7 @@
 // Import necessary Amplify and React components
 import 'semantic-ui-css/semantic.min.css';
 import './App.css';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useReducer } from 'react';
 import { Amplify } from 'aws-amplify'; // Named import for Amplify
 import { graphqlOperation } from '@aws-amplify/api-graphql'; // Import graphqlOperation from '@aws-amplify/api-graphql'
 import { listLists } from './graphql/queries'; // Make sure this is the correct query
@@ -19,7 +19,28 @@ import { Button, Container, Form, Icon, Modal } from 'semantic-ui-react';
 // Configure Amplify with your aws-exports
 Amplify.configure(awsExports);
 
+const initialState = {
+  title: "",
+  description: ""
+}
+
+function listReducer(state = initialState, action) {
+  switch (action.type) {
+    case 'DESCRIPTION_CHANGED':
+      return { ...state, description: action.value };
+    case 'TITLE_CHANGED':
+      return { ...state, title: action.value };
+    default:
+      console.log('Default action for: ', action);
+      return state;
+  }
+}
+
+
+
 export default function App() {
+
+  const [state, dispatch] = useReducer(listReducer,initialState)
   const [lists, setLists] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -73,10 +94,15 @@ export default function App() {
                     error={true ? false : { content: 'Please add a name to your list' }}
                     label='Title'
                     placeholder='My pretty list'
+                    value={state.title}
+                    onChange={(e) => dispatch({type: 'TITLE_CHANGED',value: e.target.value}) }
                   />
                   <Form.TextArea
+                    value={state.description}
+                    onChange={(e) => dispatch({type:'DESCRIPTION_CHANGED', value: e.target.value})}
                     label='Description'
                     placeholder='Things that my pretty list is about'
+                    value={state.description}
                   />
                 </Form>
                 </Modal.Content>
