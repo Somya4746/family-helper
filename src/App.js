@@ -11,102 +11,126 @@ import '@aws-amplify/ui-react/styles.css';
 import MainHeader from './components/Headers/MainHeader';
 import Lists from './components/Lists/Lists';
 import { Button, Container, Form, Icon, Modal } from 'semantic-ui-react';
+import { onCreateList } from './graphql/subscriptions';
+import { graphqlOperation } from '@aws-amplify/api-graphql';
 
 Amplify.configure(awsExports);
 
 const initialState = {
   title: '',
-  description: ''
-}
+  description: '',
+  isModalOpen: false,
+  error: null
+};
 
-function listReducer(state = initialState, action) {
+function listReducer(state, action) {
   switch (action.type) {
     case 'DESCRIPTION_CHANGED':
-      return { ...state, description: action.value };
     case 'TITLE_CHANGED':
-      return { ...state, title: action.value };
+    case 'ERROR':
+      return { ...state, [action.field]: action.value };
+    case 'OPEN_MODAL':
+      return { ...state, isModalOpen: true };
+    case 'CLOSE_MODAL':
+      return { ...initialState };
     default:
-      console.log('Default action for: ', action);
+      console.error('Unhandled action type:', action.type);
       return state;
   }
 }
 
 export default function App() {
-  const [state, dispatch] = useReducer(listReducer, initialState)
+  const [state, dispatch] = useReducer(listReducer, initialState);
   const [lists, setLists] = useState([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const client = generateClient();
 
-  async function fetchList() {
+  const fetchList = async () => {
     try {
       const listData = await client.graphql({ query: queries.listLists });
-      const lists = listData.data.listLists.items;
-      setLists(lists);
+      setLists(listData.data.listLists.items);
     } catch (error) {
-      console.error('Error fetching lists', error);
+      console.error('Error fetching lists:', error);
+      dispatch({ type: 'ERROR', field: 'error', value: error.message });
     }
-  }
+  };
 
   useEffect(() => {
     fetchList();
   }, []);
 
-  function toggleModal(shouldOpen) {
-    setIsModalOpen(shouldOpen);
-  }
+  useEffect(() => {
+    const subscription = client
+      .graphql(graphqlOperation(onCreateList))
+      .subscribe({
+        next: response => {
+          const newList = response?.data?.onCreateList;
+          if (newList) {
+            setLists(prevLists => [newList, ...prevLists]);
+          }
+        },
+        error: error => {
+          console.error('Subscription error:', error);
+          dispatch({ type: 'ERROR', field: 'error', value: error.message });
+        }
+      });
+  
+    return () => subscription.unsubscribe();
+  }, []);
 
-  async function saveList(){ 
+  const saveList = async () => {
     const { title, description } = state;
     try {
       await client.graphql({
         query: mutations.createList,
-        variables: { input: { title, description }}
+        variables: { input: { title, description } }
       });
-      toggleModal(false);
-      fetchList(); // Refresh the list after saving
+      dispatch({ type: 'CLOSE_MODAL' });
     } catch (error) {
-      console.error('Error saving list', error);
+      console.error('Error saving list:', error);
+      dispatch({ type: 'ERROR', field: 'error', value: error.message });
     }
-  }
+  };
 
   return (
     <>
       <MainHeader />
-
       <Authenticator>
         {({ signOut, user }) => (
           <>
             <Container style={{ height: '100vh' }}>
-              <Button className='floatingButton' onClick={() => toggleModal(true)}>
+              <Button
+                className='floatingButton'
+                onClick={() => dispatch({ type: 'OPEN_MODAL' })}>
                 <Icon name='plus' className='floatingButton_icon' />
               </Button>
 
               <main>
                 <h1>Hello {user.username}</h1>
                 <button className="fluid ui button" onClick={signOut}>Sign out</button>
+                {state.error && <p>Error: {state.error}</p>}
                 <Lists lists={lists} />
               </main>
 
-              <Modal open={isModalOpen} dimmer='blurring'>
-                <Modal.Header> Create your list </Modal.Header>
+              <Modal open={state.isModalOpen} dimmer='blurring'>
+                <Modal.Header>Create your list</Modal.Header>
                 <Modal.Content>
                   <Form>
                     <Form.Input
                       label='Title'
                       placeholder='My pretty list'
                       value={state.title}
-                      onChange={(e) => dispatch({ type: 'TITLE_CHANGED', value: e.target.value })}
+                      onChange={(e) => dispatch({ type: 'TITLE_CHANGED', field: 'title', value: e.target.value })}
                     />
                     <Form.TextArea
                       label='Description'
                       placeholder='Things that my pretty list is about'
                       value={state.description}
-                      onChange={(e) => dispatch({ type: 'DESCRIPTION_CHANGED', value: e.target.value })}
+                      onChange={(e) => dispatch({ type: 'DESCRIPTION_CHANGED', field: 'description', value: e.target.value })}
                     />
                   </Form>
                 </Modal.Content>
                 <Modal.Actions>
-                  <Button negative onClick={() => toggleModal(false)}>Cancel</Button>
+                  <Button negative onClick={() => dispatch({ type: 'CLOSE_MODAL' })}>Cancel</Button>
                   <Button positive onClick={saveList}>Save</Button>
                 </Modal.Actions>
               </Modal>
