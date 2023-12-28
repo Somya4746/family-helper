@@ -1,6 +1,6 @@
 import 'semantic-ui-css/semantic.min.css';
 import './App.css';
-import React, { useState, useEffect, useReducer } from 'react';
+import React, { useState, useEffect, useReducer, useMemo } from 'react';
 import { Amplify } from 'aws-amplify';
 import awsExports from './aws-exports';
 import { generateClient } from 'aws-amplify/api';
@@ -11,17 +11,23 @@ import '@aws-amplify/ui-react/styles.css';
 import MainHeader from './components/Headers/MainHeader';
 import Lists from './components/Lists/Lists';
 import { Button, Container, Form, Icon, Modal } from 'semantic-ui-react';
-import { onCreateList } from './graphql/subscriptions';
+import { onCreateList ,onDeleteList, onUpdateList} from './graphql/subscriptions';
 import { graphqlOperation } from '@aws-amplify/api-graphql';
+import ListModal from './components/modals/ListModal';
+
 
 Amplify.configure(awsExports);
 
 const initialState = {
+  id: '',
   title: '',
   description: '',
   isModalOpen: false,
-  error: null
+  error: null,
+  deletingListId: null ,// New state property for tracking deletion
+  modalType:''
 };
+
 
 function listReducer(state, action) {
   switch (action.type) {
@@ -30,9 +36,24 @@ function listReducer(state, action) {
     case 'ERROR':
       return { ...state, [action.field]: action.value };
     case 'OPEN_MODAL':
-      return { ...state, isModalOpen: true };
+      return { ...state, isModalOpen: true ,modalType:'add'};
     case 'CLOSE_MODAL':
-      return { ...initialState };
+  // Preserve the id when closing the modal if it's an edit action
+  const newState = { ...initialState };
+  if (state.modalType === 'edit') {
+    newState.id = state.id;
+  }
+  return newState;
+
+    case 'DELETE_LIST':
+      // Set the ID of the list to be deleted
+      return { ...state, deletingListId: action.value };
+    case 'EDIT_LIST':{
+      const newValue = {...action.value}
+      delete newValue.dispatch;
+      console.log(newValue);
+      return { ...state ,isModalOpen: true,modalType:'edit' ,id: newValue.id ,title: newValue.title , description: newValue.description};
+    }
     default:
       console.error('Unhandled action type:', action.type);
       return state;
@@ -42,54 +63,99 @@ function listReducer(state, action) {
 export default function App() {
   const [state, dispatch] = useReducer(listReducer, initialState);
   const [lists, setLists] = useState([]);
-  const client = generateClient();
 
-  const fetchList = async () => {
+  const client = useMemo(() => generateClient(), []);
+
+  async function deleteListById(id) {
     try {
-      const listData = await client.graphql({ query: queries.listLists });
-      setLists(listData.data.listLists.items);
+      await client.graphql(graphqlOperation(mutations.deleteList, { input: { id } }));
+      console.log('List deleted:', id);
+      // Remove the list from the state
+      setLists(lists.filter(list => list.id !== id));
     } catch (error) {
-      console.error('Error fetching lists:', error);
+      console.error('Error deleting list:', error);
       dispatch({ type: 'ERROR', field: 'error', value: error.message });
     }
-  };
+  }
 
   useEffect(() => {
+    async function fetchList() {
+      try {
+        const listData = await client.graphql({ query: queries.listLists });
+        setLists(listData.data.listLists.items);
+      } catch (error) {
+        console.error('Error fetching lists:', error);
+        dispatch({ type: 'ERROR', field: 'error', value: error.message });
+      }
+    }
+
     fetchList();
-  }, []);
+  }, [client]);
 
   useEffect(() => {
-    const subscription = client
-      .graphql(graphqlOperation(onCreateList))
-      .subscribe({
-        next: response => {
-          const newList = response?.data?.onCreateList;
-          if (newList) {
-            setLists(prevLists => [newList, ...prevLists]);
-          }
-        },
-        error: error => {
-          console.error('Subscription error:', error);
-          dispatch({ type: 'ERROR', field: 'error', value: error.message });
+    const subscription = client.graphql(graphqlOperation(onCreateList)).subscribe({
+      next: response => {
+        const newList = response?.data?.onCreateList;
+        if (newList) {
+          setLists(prevLists => [newList, ...prevLists]);
         }
-      });
-  
-    return () => subscription.unsubscribe();
-  }, []);
+      },
+      error: error => {
+        console.error('The create subscription error:', error);
+        dispatch({ type: 'ERROR', field: 'error', value: error.message });
+      },
+    });
 
-  const saveList = async () => {
-    const { title, description } = state;
-    try {
-      await client.graphql({
-        query: mutations.createList,
-        variables: { input: { title, description } }
-      });
-      dispatch({ type: 'CLOSE_MODAL' });
-    } catch (error) {
-      console.error('Error saving list:', error);
-      dispatch({ type: 'ERROR', field: 'error', value: error.message });
+    return () => subscription.unsubscribe();
+  }, [client]);
+
+  useEffect(() => {
+    const updateSubscription = client.graphql(graphqlOperation(onUpdateList)).subscribe({
+      next: response => {
+        const updatedList = response?.data?.onUpdateList;
+        if (updatedList) {
+          // Update the lists state to reflect the changes
+          setLists(prevLists => prevLists.map(list => {
+            return list.id === updatedList.id ? updatedList : list;
+          }));
+        }
+      },
+      error: error => {
+        console.error('The update subscription error:', error);
+        dispatch({ type: 'ERROR', field: 'error', value: error.message });
+      },
+    });
+  
+    return () => updateSubscription.unsubscribe();
+  }, [client]);
+  
+
+  useEffect(() => {
+    const deleteSubscription = client.graphql(graphqlOperation(onDeleteList)).subscribe({
+      next: response => {
+        const deletedListId = response?.data?.onDeleteList?.id;
+        if (deletedListId) {
+          setLists(prevLists => prevLists.filter(list => list.id !== deletedListId));
+        }
+      },
+      error: error => {
+        console.error('The delete subscription error:', error);
+        dispatch({ type: 'ERROR', field: 'error', value: error.message });
+      },
+    });
+
+    return () => deleteSubscription.unsubscribe();
+  }, [client]);
+
+  useEffect(() => {
+    // Handle deletion when the deletingListId changes
+    if (state.deletingListId) {
+      deleteListById(state.deletingListId);
+      dispatch({ type: 'DELETE_LIST', value: null }); // Reset the deletingListId after deletion
     }
-  };
+  }, [state.deletingListId]);
+
+
 
   return (
     <>
@@ -108,34 +174,14 @@ export default function App() {
                 <h1>Hello {user.username}</h1>
                 <button className="fluid ui button" onClick={signOut}>Sign out</button>
                 {state.error && <p>Error: {state.error}</p>}
-                <Lists lists={lists} />
+                <Lists lists={lists} dispatch={dispatch} />
               </main>
 
-              <Modal open={state.isModalOpen} dimmer='blurring'>
-                <Modal.Header>Create your list</Modal.Header>
-                <Modal.Content>
-                  <Form>
-                    <Form.Input
-                      label='Title'
-                      placeholder='My pretty list'
-                      value={state.title}
-                      onChange={(e) => dispatch({ type: 'TITLE_CHANGED', field: 'title', value: e.target.value })}
-                    />
-                    <Form.TextArea
-                      label='Description'
-                      placeholder='Things that my pretty list is about'
-                      value={state.description}
-                      onChange={(e) => dispatch({ type: 'DESCRIPTION_CHANGED', field: 'description', value: e.target.value })}
-                    />
-                  </Form>
-                </Modal.Content>
-                <Modal.Actions>
-                  <Button negative onClick={() => dispatch({ type: 'CLOSE_MODAL' })}>Cancel</Button>
-                  <Button positive onClick={saveList}>Save</Button>
-                </Modal.Actions>
-              </Modal>
+    
             </Container>
+            <ListModal state={state} dispatch={dispatch} client={client} />
           </>
+          
         )}
       </Authenticator>
     </>
